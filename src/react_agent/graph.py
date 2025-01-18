@@ -122,63 +122,58 @@ Works with a chat model with tool calling support.
 # )
 # graph.name = "ReAct Agent"  # This customizes the name in LangSmith
 
-"""Define a simple assistant that returns a fixed text response."""
 
-from typing import Dict, List, Literal
 
-from langchain_core.messages import AIMessage
+"""Simple script that performs human interaction and returns the result."""
+
+from typing import TypedDict
 from langgraph.graph import StateGraph
+from langgraph.types import interrupt
+from langchain_core.messages import ToolMessage
+from typing_extensions import Literal
 
-from react_agent.state import InputState, State
+# Define the state schema
+class State(TypedDict):
+    messages: list
 
-# Define the function that returns a fixed response
+# Define the human interaction node
+def human_interaction_node(state: State):
+    # Prepare the interrupt request
+    human_interrupt = {
+        "action_request": {
+            "action": "human_assistance",
+            "args": {
+                "query": "Please provide the necessary information."
+            }
+        },
+        "config": {
+            "allow_accept": True,
+            "allow_edit": True,
+            "allow_respond": True,
+            "allow_ignore": True
+        },
+        "description": "The assistant is requesting human assistance."
+    }
+    # Call interrupt and wait for human response
+    human_response = interrupt([human_interrupt])[0]
+    # Return the human response as a ToolMessage
+    return {
+        "messages": [
+            ToolMessage(
+                content=human_response["args"]["response"],
+                tool_call_id=human_response.get("tool_call_id", "human_interaction")
+            )
+        ]
+    }
 
-async def return_fixed_response(
-    state: State, config=None
-) -> Dict[str, List[AIMessage]]:
-    """Return a fixed text response.
+# Define the graph
+graph_builder = StateGraph(State)
 
-    Args:
-        state (State): The current state of the conversation.
+# Add the human interaction node
+graph_builder.add_node("human_interaction_node", human_interaction_node)
 
-    Returns:
-        dict: A dictionary containing the assistant's response message.
-    """
-    response = AIMessage(content="hello")
+# Set the entry point
+graph_builder.set_entry_point("human_interaction_node")
 
-    # Return the response as a list to be added to existing messages
-    return {"messages": [response]}
-
-
-# Define a new graph
-
-builder = StateGraph(State, input=InputState)
-
-# Add only the `return_fixed_response` node
-builder.add_node(return_fixed_response)
-
-# Set the entrypoint as `return_fixed_response`
-builder.add_edge("__start__", "return_fixed_response")
-
-
-def route_output(state: State) -> Literal["__end__"]:
-    """Always end the graph after the response.
-
-    Args:
-        state (State): The current state of the conversation.
-
-    Returns:
-        str: "__end__" to indicate the graph should finish.
-    """
-    return "__end__"
-
-
-# Add a conditional edge to determine the next step after `return_fixed_response`
-builder.add_conditional_edges(
-    "return_fixed_response",
-    route_output,
-)
-
-# Compile the builder into an executable graph
-graph = builder.compile()
-graph.name = "Fixed Response Assistant"  # This customizes the name in LangSmith
+# Compile the graph
+graph = graph_builder.compile()
