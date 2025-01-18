@@ -124,47 +124,54 @@ Works with a chat model with tool calling support.
 
 
 
-"""Simple script that performs human interaction and returns the result."""
+"""Simple script that performs human interaction via Agent Inbox and returns the result."""
 
-from typing import TypedDict
+from typing import TypedDict, Literal, Optional, List, Dict
 from langgraph.graph import StateGraph
 from langgraph.types import interrupt
-from langchain_core.messages import ToolMessage
-from typing_extensions import Literal
+from langchain_core.messages import HumanMessage, ToolMessage
+from langgraph.graph.message import add_messages
+from typing_extensions import Annotated
 
 # Define the state schema
 class State(TypedDict):
-    messages: list
+    messages: Annotated[List[HumanMessage], add_messages]
 
 # Define the human interaction node
 def human_interaction_node(state: State):
     # Prepare the interrupt request
-    human_interrupt = {
+    request = {
         "action_request": {
-            "action": "human_assistance",
+            "action": "HumanAssistance",
             "args": {
-                "query": "Please provide the necessary information."
+                "question": "Please provide the necessary information."
             }
         },
         "config": {
-            "allow_accept": True,
-            "allow_edit": True,
+            "allow_ignore": True,
             "allow_respond": True,
-            "allow_ignore": True
+            "allow_edit": False,
+            "allow_accept": False,
         },
         "description": "The assistant is requesting human assistance."
     }
-    # Call interrupt and wait for human response
-    human_response = interrupt([human_interrupt])[0]
-    # Return the human response as a ToolMessage
-    return {
-        "messages": [
-            ToolMessage(
-                content=human_response["args"]["response"],
-                tool_call_id=human_response.get("tool_call_id", "human_interaction")
-            )
-        ]
-    }
+    # Send the interrupt request inside a list, and extract the first response
+    response = interrupt([request])[0]
+
+    if response["type"] == "response":
+        # Process the human response and return it as a message
+        human_message = HumanMessage(
+            content=response["args"]  # The human's input
+        )
+        return {"messages": [human_message]}
+    elif response["type"] == "ignore":
+        # Handle the case where the user chooses to ignore the request
+        msg = ToolMessage(
+            content="The request was ignored by the user."
+        )
+        return {"messages": [msg]}
+    else:
+        raise ValueError(f"Unexpected response type: {response['type']}")
 
 # Define the graph
 graph_builder = StateGraph(State)
@@ -174,6 +181,9 @@ graph_builder.add_node("human_interaction_node", human_interaction_node)
 
 # Set the entry point
 graph_builder.set_entry_point("human_interaction_node")
+
+# Since we want the graph to end after the human interaction, we add an edge to END
+graph_builder.add_edge("human_interaction_node", "__end__")
 
 # Compile the graph
 graph = graph_builder.compile()
